@@ -29,18 +29,79 @@ export function makeAbsoluteUrl(baseUrl: string, relativeOrAbsolute: string): st
  */
 export function extractEditionLinksFromHtml(html: string, baseUrl: string): ExtractedEditionLink[] {
   const links: ExtractedEditionLink[] = [];
-  const hrefRegex = /href=["']([^"']*(?:exibe_do\.php|impressao\.php|leiturajornal\.php|dioe\.com\.br|dosp\.com\.br|imprensaoficialmunicipal|\.pdf)[^"']*)["']/gi;
-  let match: RegExpExecArray | null;
-
   const foundKeys = new Set<string>();
   const foundUrls = new Set<string>();
 
+  // 1. Check if HTML contains DOSP JSON structure or callback data directly (e.g. dioe.data)
+  const jsonpMatch = html.match(/(?:dioe|data)\s*=\s*(\{[\s\S]*?\}|\[[\s\S]*?\])/);
+  if (jsonpMatch) {
+    try {
+      const rawJson = jsonpMatch[1];
+      const parsed = JSON.parse(rawJson);
+      const items = Array.isArray(parsed) ? parsed : parsed.data;
+      if (Array.isArray(items)) {
+        for (const item of items) {
+          if (item.iddo && item.edicao_do) {
+            let iKey = String(item.iddo);
+            try {
+              iKey = btoa(String(item.iddo));
+            } catch (e) {
+              // fallback
+            }
+
+            if (foundKeys.has(iKey)) continue;
+            foundKeys.add(iKey);
+
+            const edNum = item.edicao_do;
+            const isExtra = item.flag_extra == 1;
+            const editionStr = `Edição nº ${edNum}${isExtra ? ' (ed. extra)' : ''}`;
+
+            let dateStr = '';
+            if (item.data) {
+              const dParts = String(item.data).split(' ')[0].split('-');
+              if (dParts.length === 3) {
+                dateStr = `${dParts[2]}/${dParts[1]}/${dParts[0]}`;
+              }
+            }
+
+            const printUrl = `https://dosp.com.br/impressao.php?i=${iKey}`;
+            links.push({
+              title: `${editionStr}${dateStr ? ` - ${dateStr}` : ''}`,
+              date: dateStr || new Date().toLocaleDateString('pt-BR'),
+              editionNumber: editionStr,
+              url: printUrl,
+            });
+          }
+        }
+        if (links.length > 0) return links;
+      }
+    } catch (e) {
+      // Fallthrough to HTML regex
+    }
+  }
+
+  // 2. Strict regex matching ONLY actual gazette edition links
+  const hrefRegex = /href=["']([^"']*(?:exibe_do\.php|impressao\.php|leiturajornal\.php|\.pdf)[^"']*)["']/gi;
+  let match: RegExpExecArray | null;
+
   while ((match = hrefRegex.exec(html)) !== null) {
     const rawUrl = match[1];
+
+    // Ignore static assets like CSS, JS, images, fonts
+    if (/\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)(\?.*)?$/i.test(rawUrl)) {
+      continue;
+    }
+
     const absoluteUrl = makeAbsoluteUrl(baseUrl, rawUrl);
 
     // Check if URL has an edition key (i=...)
     const iMatch = absoluteUrl.match(/[?&]i=([A-Za-z0-9%=-]+)/);
+
+    // Skip if no edition key AND not a pdf file AND not a gazette script page
+    if (!iMatch && !/\.pdf($|\?)/i.test(absoluteUrl) && !/(?:exibe_do|impressao|leiturajornal)\.php/i.test(absoluteUrl)) {
+      continue;
+    }
+
     const key = iMatch ? iMatch[1] : absoluteUrl;
 
     if (foundKeys.has(key) || foundUrls.has(absoluteUrl)) continue;
@@ -52,15 +113,19 @@ export function extractEditionLinksFromHtml(html: string, baseUrl: string): Extr
     const endContext = Math.min(html.length, matchIndex + 350);
     const contextText = html.substring(startContext, endContext).replace(/<[^>]+>/g, ' ');
 
+    // Extract Date
     const dateMatch = contextText.match(/(\d{2}\/\d{2}\/\d{4})/);
-    const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('pt-BR');
+    const date = dateMatch ? dateMatch[1] : '';
 
-    const editionMatch = contextText.match(/(?:edi[çc][ãa]o|ed\.?|n[ºo]?)\s*[:.-]?\s*(\d+[A-Z]?(?:\s*\([^)]+\))?)/i);
-    const editionNumber = editionMatch ? `Edição nº ${editionMatch[1]}` : 'Edição Diária';
+    // Extract Edition Number
+    const edMatch =
+      contextText.match(/(?:nº|n°|ed\.?|edi[çc][ãa]o|número)\s*[:.-]?\s*(\d+[A-Z]?(?:\s*\([^)]+\))?)/i) ||
+      contextText.match(/\b(\d{3,5}[A-Z]?(?:\s*\(ed\.\s*extra\))?)\b/i);
 
-    let title = `${editionNumber} - ${date}`;
+    const editionNumber = edMatch ? `Edição nº ${edMatch[1]}` : 'Edição Diária';
+    const displayDate = date || new Date().toLocaleDateString('pt-BR');
+    const title = `${editionNumber}${date ? ` - ${date}` : ''}`;
 
-    // Prefer impressao.php if edition key exists for full PDF download
     let targetUrl = absoluteUrl;
     if (iMatch) {
       targetUrl = `https://dosp.com.br/impressao.php?i=${iMatch[1]}`;
@@ -68,7 +133,7 @@ export function extractEditionLinksFromHtml(html: string, baseUrl: string): Extr
 
     links.push({
       title,
-      date,
+      date: displayDate,
       editionNumber,
       url: targetUrl,
     });
