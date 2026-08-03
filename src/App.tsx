@@ -16,14 +16,14 @@ import {
   Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Topic, AnalysisResponse, HistoryItem } from './types.js';
-import { checkEditionApi, extractLinksApi } from './services/api.js';
-import { SourceConfig } from './components/SourceConfig.js';
-import { TopicManager, PRESET_PACKS } from './components/TopicManager.js';
-import { AnalysisResults } from './components/AnalysisResults.js';
-import { HtmlInputModal } from './components/HtmlInputModal.js';
-import { PdfViewerModal } from './components/PdfViewerModal.js';
-import { HistoryPanel } from './components/HistoryPanel.js';
+import { Topic, AnalysisResponse, HistoryItem } from './types';
+import { checkEditionApi, extractLinksApi } from './services/api';
+import { SourceConfig } from './components/SourceConfig';
+import { TopicManager, PRESET_PACKS } from './components/TopicManager';
+import { AnalysisResults } from './components/AnalysisResults';
+import { HtmlInputModal } from './components/HtmlInputModal';
+import { PdfViewerModal } from './components/PdfViewerModal';
+import { HistoryPanel } from './components/HistoryPanel';
 
 const INITIAL_TOPICS: Topic[] = [
   {

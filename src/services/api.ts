@@ -1,4 +1,4 @@
-import { Topic, AnalysisResponse } from '../types.js';
+import { Topic, AnalysisResponse } from '../types';
 
 export async function checkEditionApi(params: {
   sourceUrl: string;
