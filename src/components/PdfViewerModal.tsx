@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Download, ExternalLink, FileText, ZoomIn, ZoomOut } from 'lucide-react';
+import { X, Download, ExternalLink, FileText } from 'lucide-react';
 
 interface PdfViewerModalProps {
   isOpen: boolean;
@@ -11,9 +11,19 @@ interface PdfViewerModalProps {
 export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({ isOpen, onClose, pdfUrl, targetPage }) => {
   if (!isOpen || !pdfUrl) return null;
 
-  const proxiedPdfUrl = `/api/proxy-pdf?url=${encodeURIComponent(pdfUrl)}${
-    targetPage ? `#page=${targetPage}` : ''
-  }`;
+  // Detect if we are on GitHub Pages or static host where /api proxy is unavailable
+  const isStaticHost =
+    window.location.hostname.includes('github.io') ||
+    window.location.hostname.includes('pages.dev') ||
+    window.location.protocol === 'file:';
+
+  const proxiedPdfUrl = isStaticHost
+    ? pdfUrl
+    : `/api/proxy-pdf?url=${encodeURIComponent(pdfUrl)}${targetPage ? `#page=${targetPage}` : ''}`;
+
+  const embeddedViewerUrl = isStaticHost
+    ? `https://docs.google.com/viewer?url=${encodeURIComponent(pdfUrl)}&embedded=true`
+    : proxiedPdfUrl;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/80 backdrop-blur-xs animate-in fade-in duration-200">
@@ -43,8 +53,10 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({ isOpen, onClose,
               Abrir em Nova Aba
             </a>
             <a
-              href={proxiedPdfUrl}
+              href={pdfUrl}
               download="Diario-Oficial.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
@@ -62,7 +74,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({ isOpen, onClose,
         {/* PDF Frame */}
         <div className="flex-1 bg-slate-100 relative">
           <iframe
-            src={proxiedPdfUrl}
+            src={embeddedViewerUrl}
             title="Diário Oficial PDF"
             className="w-full h-full border-0"
           />
