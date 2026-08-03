@@ -38,10 +38,10 @@ export const SourceConfig: React.FC<SourceConfigProps> = ({
       city: 'Jaguariúna - SP',
     },
     {
-      name: 'Jaguariúna - Última Edição (DIOE)',
-      url: 'https://www.imprensaoficialmunicipal.com.br/jaguariuna',
-      directPdf: 'https://www.dioe.com.br/exibe_do.php?i=ODU2Njkz',
-      city: 'Jaguariúna - SP',
+      name: 'Portal DOSP - Imprensa Oficial',
+      url: 'https://dosp.com.br',
+      directPdf: '',
+      city: 'Imprensa Oficial',
     },
     {
       name: 'Personalizado / Outro Município',

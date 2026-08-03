@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import fetch from 'node-fetch';
 import { createServer as createViteServer } from 'vite';
-import { fetchPdfBufferFromUrl, extractEditionLinksFromHtml, makeAbsoluteUrl } from './server/htmlScraper.js';
+import { fetchPdfBufferFromUrl, extractEditionLinksFromHtml, fetchDospApiEditions, makeAbsoluteUrl } from './server/htmlScraper.js';
 import { analyzeGazetteWithGemini } from './server/pdfAnalyzer.js';
 import { Topic, EditionMetadata } from './src/types.js';
 
@@ -62,7 +62,11 @@ async function startServer() {
         htmlContent = await response.text();
       }
 
-      const detectedEditions = extractEditionLinksFromHtml(htmlContent, baseUrl);
+      let detectedEditions = await fetchDospApiEditions(htmlContent);
+      if (detectedEditions.length === 0) {
+        detectedEditions = extractEditionLinksFromHtml(htmlContent, baseUrl);
+      }
+
       return res.json({
         success: true,
         detectedEditions,
@@ -123,7 +127,10 @@ async function startServer() {
         }
 
         if (!pdfUrlToFetch && htmlToScan) {
-          detectedEditionsList = extractEditionLinksFromHtml(htmlToScan, sourceUrl);
+          detectedEditionsList = await fetchDospApiEditions(htmlToScan);
+          if (detectedEditionsList.length === 0) {
+            detectedEditionsList = extractEditionLinksFromHtml(htmlToScan, sourceUrl);
+          }
           if (detectedEditionsList.length > 0) {
             pdfUrlToFetch = detectedEditionsList[0].url;
             console.log(`[check-edition] Selecionada edição mais recente identificada: ${pdfUrlToFetch}`);
@@ -133,7 +140,7 @@ async function startServer() {
 
       if (!pdfUrlToFetch) {
         // Fallback default sample link if none resolved
-        pdfUrlToFetch = 'https://www.dioe.com.br/exibe_do.php?i=ODU2Njkz';
+        pdfUrlToFetch = 'https://dosp.com.br/impressao.php?i=ODU2Njkz';
       }
 
       // Fetch PDF Buffer

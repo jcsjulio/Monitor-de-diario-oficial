@@ -29,37 +29,48 @@ export function makeAbsoluteUrl(baseUrl: string, relativeOrAbsolute: string): st
  */
 export function extractEditionLinksFromHtml(html: string, baseUrl: string): ExtractedEditionLink[] {
   const links: ExtractedEditionLink[] = [];
-  const hrefRegex = /href=["']([^"']*(?:exibe_do\.php|dioe\.com\.br|\.pdf)[^"']*)["']/gi;
+  const hrefRegex = /href=["']([^"']*(?:exibe_do\.php|impressao\.php|leiturajornal\.php|dioe\.com\.br|dosp\.com\.br|imprensaoficialmunicipal|\.pdf)[^"']*)["']/gi;
   let match: RegExpExecArray | null;
 
+  const foundKeys = new Set<string>();
   const foundUrls = new Set<string>();
 
   while ((match = hrefRegex.exec(html)) !== null) {
     const rawUrl = match[1];
     const absoluteUrl = makeAbsoluteUrl(baseUrl, rawUrl);
 
-    if (foundUrls.has(absoluteUrl)) continue;
+    // Check if URL has an edition key (i=...)
+    const iMatch = absoluteUrl.match(/[?&]i=([A-Za-z0-9%=-]+)/);
+    const key = iMatch ? iMatch[1] : absoluteUrl;
+
+    if (foundKeys.has(key) || foundUrls.has(absoluteUrl)) continue;
+    foundKeys.add(key);
     foundUrls.add(absoluteUrl);
 
     const matchIndex = match.index;
-    const startContext = Math.max(0, matchIndex - 300);
-    const endContext = Math.min(html.length, matchIndex + 300);
+    const startContext = Math.max(0, matchIndex - 350);
+    const endContext = Math.min(html.length, matchIndex + 350);
     const contextText = html.substring(startContext, endContext).replace(/<[^>]+>/g, ' ');
 
     const dateMatch = contextText.match(/(\d{2}\/\d{2}\/\d{4})/);
     const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('pt-BR');
 
-    const editionMatch = contextText.match(/(?:edi[çc][ãa]o|ed\.?|n[ºo]?)\s*[:.-]?\s*(\d+)/i);
+    const editionMatch = contextText.match(/(?:edi[çc][ãa]o|ed\.?|n[ºo]?)\s*[:.-]?\s*(\d+[A-Z]?(?:\s*\([^)]+\))?)/i);
     const editionNumber = editionMatch ? `Edição nº ${editionMatch[1]}` : 'Edição Diária';
 
-    let title = contextText.trim().replace(/\s+/g, ' ').slice(0, 80);
-    if (!title) title = `Diário Oficial - ${date}`;
+    let title = `${editionNumber} - ${date}`;
+
+    // Prefer impressao.php if edition key exists for full PDF download
+    let targetUrl = absoluteUrl;
+    if (iMatch) {
+      targetUrl = `https://dosp.com.br/impressao.php?i=${iMatch[1]}`;
+    }
 
     links.push({
-      title: `${editionNumber} - ${date}`,
+      title,
       date,
       editionNumber,
-      url: absoluteUrl,
+      url: targetUrl,
     });
   }
 

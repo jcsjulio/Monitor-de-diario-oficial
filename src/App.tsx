@@ -65,7 +65,7 @@ const INITIAL_TOPICS: Topic[] = [
 
 export default function App() {
   const [sourceUrl, setSourceUrl] = useState('https://www.imprensaoficialmunicipal.com.br/jaguariuna');
-  const [directPdfUrl, setDirectPdfUrl] = useState('https://www.dioe.com.br/exibe_do.php?i=ODU2Njkz');
+  const [directPdfUrl, setDirectPdfUrl] = useState('');
   const [cityName, setCityName] = useState('Jaguariúna - SP');
 
   const [topics, setTopics] = useState<Topic[]>(() => {
