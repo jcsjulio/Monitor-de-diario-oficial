@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import * as _pdfParse from 'pdf-parse';
 import { Topic, TopicResult, EditionMetadata } from '../src/types.js';
+import { cleanHtmlToGazetteText } from './htmlScraper.js';
 
 const pdfParse: any = (_pdfParse as any).default || _pdfParse;
 
@@ -76,13 +77,26 @@ export async function analyzeGazetteWithGemini(
 ): Promise<{ overallSummary: string; topicResults: TopicResult[]; editionMetadata: EditionMetadata }> {
   const ai = getAiClient();
 
-  // 1. Extract text and pages from PDF
+  // 1. Extract text and pages from PDF or clean HTML text
   let textData: { fullText: string; pages: PageText[]; totalPages: number };
-  try {
-    textData = await extractPdfTextPages(pdfBuffer);
-  } catch (e) {
-    console.error('Falha no pdf-parse, fallback para envio direto do PDF ao Gemini:', e);
-    textData = { fullText: '', pages: [], totalPages: 0 };
+  const isPdfFormat = pdfBuffer.length > 4 && pdfBuffer.toString('utf8', 0, 4) === '%PDF';
+
+  if (isPdfFormat) {
+    try {
+      textData = await extractPdfTextPages(pdfBuffer);
+    } catch (e) {
+      console.error('Falha no pdf-parse, fallback para envio direto do PDF ao Gemini:', e);
+      textData = { fullText: '', pages: [], totalPages: 0 };
+    }
+  } else {
+    // Buffer contains HTML or plain text from gazette
+    const rawContent = pdfBuffer.toString('utf8');
+    const cleanedText = cleanHtmlToGazetteText(rawContent);
+    textData = {
+      fullText: cleanedText,
+      pages: [{ pageNumber: 1, text: cleanedText }],
+      totalPages: 1,
+    };
   }
 
   metadata.totalPages = textData.totalPages || metadata.totalPages || 1;

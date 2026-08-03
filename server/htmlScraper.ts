@@ -196,23 +196,80 @@ export async function fetchDospApiEditions(htmlContent: string): Promise<Extract
 }
 
 /**
- * Downloads URL and resolves inner PDF buffer if the page embeds a PDF
+ * Cleans raw HTML code into structured gazette text, stripping navigation, scripts, footers, and headers.
+ */
+export function cleanHtmlToGazetteText(html: string): string {
+  if (!html || typeof html !== 'string') return '';
+
+  // 1. Remove scripts, styles, header, footer, navigation, and sidebar widgets
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<div\s+id=["']top-header["'][\s\S]*?<\/div>/gi, '')
+    .replace(/<div\s+id=["']mini-cal["'][\s\S]*?<\/div>/gi, '')
+    .replace(/<section\s+id=["']widgets["'][\s\S]*?<\/section>/gi, '')
+    .replace(/<div\s+class=["']login-holder[\s\S]*?<\/div>/gi, '');
+
+  // 2. Isolate main gazette content if present (#jornal, #dioe, #content-wrapper, main, article)
+  const mainMatch =
+    text.match(/<div\s+id=["']jornal["'][\s\S]*?<\/div>\s*<\/div>/i) ||
+    text.match(/<div\s+id=["']dioe["'][\s\S]*?<\/div>/i) ||
+    text.match(/<div\s+id=["']content-wrapper["'][\s\S]*?<\/div>/i) ||
+    text.match(/<main[\s\S]*?<\/main>/i) ||
+    text.match(/<article[\s\S]*?<\/article>/i);
+
+  if (mainMatch) {
+    text = mainMatch[0];
+  }
+
+  // 3. Convert block elements to line breaks
+  text = text
+    .replace(/<\/(p|div|h[1-6]|li|tr|hr|br\s*\/?)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+
+  // 4. Decode HTML entities and clean whitespace
+  text = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'");
+
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim().replace(/\s+/g, ' '))
+    .filter((line) => line.length > 0);
+
+  return lines.join('\n');
+}
+
+/**
+ * Downloads URL and resolves inner PDF buffer or text content if page embeds/links a PDF
  */
 export async function fetchPdfBufferFromUrl(url: string): Promise<{ buffer: Buffer; finalPdfUrl: string; contentType: string }> {
-  const headers = {
+  const iParamMatch = url.match(/[?&]i=([A-Za-z0-9%=-]+)/);
+  const iVal = iParamMatch ? iParamMatch[1] : '';
+
+  const headers: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/pdf,application/xhtml+xml,text/html,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
   };
 
-  // If URL contains an edition key (i=...) from DOSP / Imprensa Oficial, try impressao.php first as it serves full merged PDF
-  const iParamMatch = url.match(/[?&]i=([A-Za-z0-9%=-]+)/);
-  if (iParamMatch && !url.includes('impressao.php')) {
-    const iVal = iParamMatch[1];
-    const domain = url.includes('imprensaoficialmunicipal')
-      ? 'https://imprensaoficialmunicipal.com.br'
-      : 'https://dosp.com.br';
-    const impressaoUrl = `${domain}/impressao.php?i=${iVal}`;
+  if (iVal) {
+    headers['Referer'] = `https://dosp.com.br/exibe_do.php?i=${iVal}`;
+  } else {
+    headers['Referer'] = 'https://dosp.com.br/';
+  }
+
+  // If URL contains an edition key (i=...) from DOSP, try impressao.php first
+  if (iVal && !url.includes('impressao.php')) {
+    const impressaoUrl = `https://dosp.com.br/impressao.php?i=${iVal}`;
     console.log(`[fetchPdfBufferFromUrl] Convertendo link para impressao.php para obter o PDF completo: ${impressaoUrl}`);
     try {
       return await fetchPdfBufferFromUrl(impressaoUrl);
@@ -241,47 +298,58 @@ export async function fetchPdfBufferFromUrl(url: string): Promise<{ buffer: Buff
     };
   }
 
-  // If response is HTML, check if it contains an embedded PDF or iframe or DOSP link
+  // Response is HTML code - let's search for embedded PDF or fallback to text mode
   const htmlContent = buffer.toString('utf8');
 
-  // Search for impressao.php?i= or exibe_do.php?i= or i= param in JS
-  const htmlIParam = htmlContent.match(/[?&"']i=([A-Za-z0-9%=-]+)/);
-  if (htmlIParam) {
-    const iVal = htmlIParam[1];
-    const domain = url.includes('imprensaoficialmunicipal')
-      ? 'https://imprensaoficialmunicipal.com.br'
-      : 'https://dosp.com.br';
-    const impressaoUrl = `${domain}/impressao.php?i=${iVal}`;
-    if (impressaoUrl !== url) {
-      console.log(`[fetchPdfBufferFromUrl] Encontrado parametro i=${iVal} no HTML, tentando ${impressaoUrl}`);
+  // 1. Search for iframe src, embed src, object data, or direct .pdf URL in HTML / JS
+  const pdfMatch =
+    htmlContent.match(/<(?:iframe|embed|object)[^>]+(?:src|data)=["']([^"']+)["']/i) ||
+    htmlContent.match(/(?:file|pdf_url|src|href)\s*[:=]\s*["']([^"']+\.pdf[^"']*)["']/i) ||
+    htmlContent.match(/href=["']([^"']*(?:exibe_do\.php|impressao\.php|\.pdf)[^"']*)["']/i);
+
+  if (pdfMatch) {
+    const innerUrl = makeAbsoluteUrl(url, pdfMatch[1]);
+    if (innerUrl !== url && !innerUrl.includes('exibe_do.php')) {
+      console.log(`[fetchPdfBufferFromUrl] Redirecionando link interno para: ${innerUrl}`);
       try {
-        return await fetchPdfBufferFromUrl(impressaoUrl);
+        return await fetchPdfBufferFromUrl(innerUrl);
       } catch (err) {
-        console.warn('Falha ao baixar impressaoUrl do HTML:', err);
+        console.warn('Falha ao baixar link interno, buscando modo texto:', err);
       }
     }
   }
 
-  // Search for iframe src, embed src, or direct pdf download link
-  const iframeMatch = htmlContent.match(/<(?:iframe|embed|object)[^>]+(?:src|data)=["']([^"']+)["']/i);
-  if (iframeMatch) {
-    const innerUrl = makeAbsoluteUrl(url, iframeMatch[1]);
-    if (innerUrl !== url) {
-      console.log(`[fetchPdfBufferFromUrl] Redirecionando iframe PDF para: ${innerUrl}`);
-      return fetchPdfBufferFromUrl(innerUrl);
+  // 2. If no direct PDF binary found and edition key exists, fetch text mode (leiturajornal.php)
+  if (iVal) {
+    const textModeUrl = `https://imprensaoficialmunicipal.com.br/leiturajornal.php?c=Jaguari%C3%BAna&i=${iVal}`;
+    console.log(`[fetchPdfBufferFromUrl] Baixando modo texto da edição (leiturajornal.php): ${textModeUrl}`);
+    try {
+      const textRes = await fetch(textModeUrl, { headers, redirect: 'follow' });
+      if (textRes.ok) {
+        const textHtml = await textRes.text();
+        const cleanedText = cleanHtmlToGazetteText(textHtml);
+        if (cleanedText && cleanedText.length > 50) {
+          return {
+            buffer: Buffer.from(cleanedText, 'utf8'),
+            finalPdfUrl: textModeUrl,
+            contentType: 'text/plain; gazette-text=true',
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Falha ao obter modo texto leiturajornal.php:', e);
     }
   }
 
-  // Search for exibe_do or .pdf inside HTML
-  const pdfLinkMatch = htmlContent.match(/href=["']([^"']*(?:exibe_do\.php|impressao\.php|leiturajornal\.php|\.pdf)[^"']*)["']/i);
-  if (pdfLinkMatch) {
-    const innerUrl = makeAbsoluteUrl(url, pdfLinkMatch[1]);
-    if (innerUrl !== url) {
-      console.log(`[fetchPdfBufferFromUrl] Redirecionando link PDF interno para: ${innerUrl}`);
-      return fetchPdfBufferFromUrl(innerUrl);
-    }
+  // 3. Fallback: Clean HTML content and return as text buffer
+  const cleanedText = cleanHtmlToGazetteText(htmlContent);
+  if (cleanedText && cleanedText.length > 50) {
+    return {
+      buffer: Buffer.from(cleanedText, 'utf8'),
+      finalPdfUrl: url,
+      contentType: 'text/plain; gazette-text=true',
+    };
   }
 
-  // If still HTML and no inner PDF found, return error
-  throw new Error(`A URL informada retornou uma página HTML sem PDF direto. Verifique se o link aponta para a edição específica.`);
+  throw new Error(`A URL informada retornou uma página HTML sem PDF ou texto da edição. Verifique se o link aponta para a edição específica.`);
 }

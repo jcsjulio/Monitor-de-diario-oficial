@@ -194,10 +194,27 @@ export default function App() {
   };
 
   // Process raw HTML input from modal
-  const handleProcessHtml = (htmlContent: string) => {
+  const handleProcessHtml = async (htmlContent: string) => {
     setIsHtmlModalOpen(false);
-    handleFetchEditions(htmlContent);
-    handleVerifyEdition(undefined, htmlContent);
+    setLoadingEditions(true);
+    setErrorMessage(null);
+    try {
+      const data = await extractLinksApi({
+        sourceUrl,
+        rawHtml: htmlContent,
+      });
+      let targetUrlToUse: string | undefined = undefined;
+      if (data.detectedEditions && data.detectedEditions.length > 0) {
+        setDetectedEditions(data.detectedEditions);
+        targetUrlToUse = data.detectedEditions[0].url;
+        setDirectPdfUrl(targetUrlToUse);
+      }
+      handleVerifyEdition(targetUrlToUse, htmlContent);
+    } catch (err) {
+      handleVerifyEdition(undefined, htmlContent);
+    } finally {
+      setLoadingEditions(false);
+    }
   };
 
   // Open PDF viewer modal at specific page

@@ -78,11 +78,35 @@ export function extractEditionLinksFromHtml(html: string, baseUrl: string): Extr
 }
 
 /**
- * Clean HTML tags to text
+ * Clean HTML tags and site navigation boilerplate to extract actual gazette text
  */
 function stripHtml(html: string): string {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  return doc.body.textContent || '';
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<div\s+id=["']top-header["'][\s\S]*?<\/div>/gi, '')
+    .replace(/<div\s+id=["']mini-cal["'][\s\S]*?<\/div>/gi, '')
+    .replace(/<section\s+id=["']widgets["'][\s\S]*?<\/section>/gi, '');
+
+  const mainMatch =
+    text.match(/<div\s+id=["']jornal["'][\s\S]*?<\/div>\s*<\/div>/i) ||
+    text.match(/<div\s+id=["']dioe["'][\s\S]*?<\/div>/i) ||
+    text.match(/<div\s+id=["']content-wrapper["'][\s\S]*?<\/div>/i) ||
+    text.match(/<main[\s\S]*?<\/main>/i);
+
+  if (mainMatch) {
+    text = mainMatch[0];
+  }
+
+  try {
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    return doc.body.textContent || '';
+  } catch (e) {
+    return text.replace(/<[^>]+>/g, ' ');
+  }
 }
 
 /**
