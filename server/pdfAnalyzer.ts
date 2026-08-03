@@ -70,13 +70,107 @@ export async function extractPdfTextPages(pdfBuffer: Buffer): Promise<{ fullText
   };
 }
 
+/**
+ * Local Rule-Based Keyword Analyzer (Zero AI / No API Key required)
+ */
+export function analyzeGazetteLocally(
+  textData: { fullText: string; pages: PageText[]; totalPages: number },
+  topics: Topic[],
+  metadata: EditionMetadata
+): { overallSummary: string; topicResults: TopicResult[]; editionMetadata: EditionMetadata } {
+  const activeTopics = topics.filter((t) => t.active);
+  const topicResults: TopicResult[] = [];
+
+  // Extract date and edition number from text if missing
+  if (textData.fullText) {
+    const dateMatch = textData.fullText.match(/(\d{2}\/\d{2}\/\d{4})/);
+    if (dateMatch && !metadata.date) {
+      metadata.date = dateMatch[1];
+    }
+    const edMatch = textData.fullText.match(/(?:edi[çc][ãa]o|ed\.?|n[ºo]?)\s*[:.-]?\s*(\d+[A-Z]?(?:\s*\([^)]+\))?)/i);
+    if (edMatch && (!metadata.editionNumber || metadata.editionNumber === 'Edição Diária')) {
+      metadata.editionNumber = `Edição nº ${edMatch[1]}`;
+    }
+  }
+
+  for (const topic of activeTopics) {
+    const occurrences: any[] = [];
+    let matchCount = 0;
+
+    const pagesToSearch = textData.pages.length > 0
+      ? textData.pages
+      : [{ pageNumber: 1, text: textData.fullText }];
+
+    for (const page of pagesToSearch) {
+      const pageText = page.text || '';
+      if (!pageText) continue;
+
+      for (const keyword of topic.keywords) {
+        if (!keyword || keyword.trim().length === 0) continue;
+        const escapedKw = keyword.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedKw}`, 'gi');
+
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(pageText)) !== null) {
+          matchCount++;
+
+          const matchIndex = match.index;
+          const startSnippet = Math.max(0, matchIndex - 120);
+          const endSnippet = Math.min(pageText.length, matchIndex + match[0].length + 120);
+          const rawSnippet = pageText.substring(startSnippet, endSnippet).replace(/\s+/g, ' ');
+          const snippet = `...${rawSnippet}...`;
+
+          // Try to extract context line
+          const textBefore = pageText.substring(Math.max(0, matchIndex - 300), matchIndex);
+          const linesBefore = textBefore.split('\n').filter((l) => l.trim().length > 3);
+          const sectionContext = linesBefore.length > 0 ? linesBefore[linesBefore.length - 1].trim().slice(0, 80) : 'Atos Oficiais do Município';
+
+          occurrences.push({
+            topicId: topic.id,
+            topicName: topic.name,
+            pageNumber: page.pageNumber || 1,
+            snippet,
+            keywordMatched: keyword,
+            sectionContext,
+            relevance: 'alta',
+            explanation: `Identificada palavra-chave "${keyword}" na página ${page.pageNumber || 1}.`,
+          });
+
+          if (occurrences.length >= 15) break;
+        }
+        if (occurrences.length >= 15) break;
+      }
+    }
+
+    const found = matchCount > 0;
+    topicResults.push({
+      topicId: topic.id,
+      topicName: topic.name,
+      found,
+      matchCount,
+      relevance: found ? (matchCount > 3 ? 'alta' : 'media') : 'nenhuma',
+      summary: found
+        ? `Identificadas ${matchCount} ocorrência(s) das palavras-chave [${topic.keywords.join(', ')}] nesta edição.`
+        : 'Nenhum termo ou referência encontrada nesta edição.',
+      occurrences,
+    });
+  }
+
+  const foundCount = topicResults.filter((r) => r.found).length;
+  const overallSummary = `[Análise Local Concluída] Processamento por regra de palavras-chave efetuado em ${textData.totalPages} página(s). ${foundCount} de ${activeTopics.length} tema(s) monitorados foram localizados no documento.`;
+
+  return {
+    overallSummary,
+    topicResults,
+    editionMetadata: metadata,
+  };
+}
+
 export async function analyzeGazetteWithGemini(
   pdfBuffer: Buffer,
   topics: Topic[],
   metadata: EditionMetadata
 ): Promise<{ overallSummary: string; topicResults: TopicResult[]; editionMetadata: EditionMetadata }> {
-  const ai = getAiClient();
-
   // 1. Extract text and pages from PDF or clean HTML text
   let textData: { fullText: string; pages: PageText[]; totalPages: number };
   const isPdfFormat = pdfBuffer.length > 4 && pdfBuffer.toString('utf8', 0, 4) === '%PDF';
@@ -85,7 +179,7 @@ export async function analyzeGazetteWithGemini(
     try {
       textData = await extractPdfTextPages(pdfBuffer);
     } catch (e) {
-      console.error('Falha no pdf-parse, fallback para envio direto do PDF ao Gemini:', e);
+      console.error('Falha no pdf-parse, fallback para envio direto do PDF:', e);
       textData = { fullText: '', pages: [], totalPages: 0 };
     }
   } else {
@@ -101,13 +195,19 @@ export async function analyzeGazetteWithGemini(
 
   metadata.totalPages = textData.totalPages || metadata.totalPages || 1;
 
-  // Format active topics for prompt
-  const activeTopics = topics.filter((t) => t.active);
-  const topicListFormatted = activeTopics
-    .map(
-      (t) => `- ID: "${t.id}" | Nome: "${t.name}" | Palavras-chave: [${t.keywords.join(', ')}]`
-    )
-    .join('\n');
+  // 2. Check if GEMINI_API_KEY is missing -> execute local non-AI analysis
+  if (!process.env.GEMINI_API_KEY) {
+    console.log('[pdfAnalyzer] GEMINI_API_KEY não configurada. Executando verificação local sem IA...');
+    return analyzeGazetteLocally(textData, topics, metadata);
+  }
+
+  // 3. Attempt Gemini AI analysis, with fallback to local rule-based analysis if AI call fails
+  try {
+    const ai = getAiClient();
+    const activeTopics = topics.filter((t) => t.active);
+    const topicListFormatted = activeTopics
+      .map((t) => `- ID: "${t.id}" | Nome: "${t.name}" | Palavras-chave: [${t.keywords.join(', ')}]`)
+      .join('\n');
 
   const promptText = `
 Você é um especialista em análise de Diários Oficiais de Prefeituras do Brasil.
@@ -272,4 +372,8 @@ Responda ESTRITAMENTE em formato JSON seguindo a estrutura solicitada.
     topicResults,
     editionMetadata: metadata,
   };
+  } catch (aiErr) {
+    console.warn('[pdfAnalyzer] Falha na análise via Gemini AI. Recorrendo à verificação local por palavras-chave:', aiErr);
+    return analyzeGazetteLocally(textData, topics, metadata);
+  }
 }

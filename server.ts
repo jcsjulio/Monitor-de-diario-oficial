@@ -9,7 +9,7 @@ import { Topic, EditionMetadata } from './src/types.js';
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Middleware for JSON body parsing (with large limit for rawHtml or base64 uploads)
   app.use(express.json({ limit: '50mb' }));
