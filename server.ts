@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import fetch from 'node-fetch';
 import { createServer as createViteServer } from 'vite';
 import { fetchPdfBufferFromUrl, extractEditionLinksFromHtml, makeAbsoluteUrl } from './server/htmlScraper.js';
@@ -177,10 +178,12 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
+    const docsPath = path.join(process.cwd(), 'docs');
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    const staticPath = fs.existsSync(docsPath) ? docsPath : distPath;
+    app.use(express.static(staticPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(path.join(staticPath, 'index.html'));
     });
   }
 
