@@ -1,0 +1,6 @@
+{
+  "name": "Monitor de Diário Oficial",
+  "description": "Verificação e análise automática de edições do Diário Oficial por tópicos de interesse.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
